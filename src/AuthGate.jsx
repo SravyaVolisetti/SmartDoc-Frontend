@@ -3,6 +3,8 @@ import "./AuthGate.css";
 
 const API = "https://smartdoc-backend-9v7s.onrender.com";
 
+let csrfToken = "";
+
 export default function AuthGate({ children }) {
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
@@ -14,23 +16,31 @@ export default function AuthGate({ children }) {
   const [error, setError] = useState("");
 
   function getCsrfToken() {
-    const cookie = document.cookie
-      .split("; ")
-      .find((item) => item.startsWith("XSRF-TOKEN="));
-
-    return cookie
-      ? decodeURIComponent(cookie.substring("XSRF-TOKEN=".length))
-      : "";
+    return csrfToken;
   }
 
   async function initializeCsrf() {
     const response = await fetch(`${API}/api/auth/csrf`, {
+      method: "GET",
       credentials: "include",
+      cache: "no-store",
     });
 
     if (!response.ok) {
-      throw new Error("Could not initialize security. Please restart the backend.");
+      throw new Error(
+        "Could not initialize security. Please try again."
+      );
     }
+
+    const data = await response.json();
+
+    if (!data.token) {
+      throw new Error(
+        "The backend did not provide a CSRF token. Please check the backend configuration."
+      );
+    }
+
+    csrfToken = data.token;
   }
 
   async function checkSession() {
@@ -38,16 +48,24 @@ export default function AuthGate({ children }) {
       await initializeCsrf();
 
       const response = await fetch(`${API}/api/auth/me`, {
+        method: "GET",
         credentials: "include",
+        cache: "no-store",
       });
 
       if (response.ok) {
         const data = await response.json();
         setUser(data.authenticated ? data : null);
+      } else if (response.status === 401) {
+        setUser(null);
+      } else {
+        throw new Error("Could not check your sign-in status.");
       }
-    } catch {
+    } catch (err) {
+      setUser(null);
       setError(
-        "Cannot connect to the backend. Make sure Spring Boot is running."
+        err.message ||
+          "Cannot connect to the backend. Please try again."
       );
     } finally {
       setLoading(false);
@@ -77,6 +95,14 @@ export default function AuthGate({ children }) {
     try {
       await initializeCsrf();
 
+      const token = getCsrfToken();
+
+      if (!token) {
+        throw new Error(
+          "Security token is missing. Please refresh the page."
+        );
+      }
+
       const response = await fetch(
         `${API}/api/auth/${mode === "register" ? "register" : "login"}`,
         {
@@ -84,19 +110,31 @@ export default function AuthGate({ children }) {
           credentials: "include",
           headers: {
             "Content-Type": "application/json",
-            "X-XSRF-TOKEN": getCsrfToken(),
+            "X-XSRF-TOKEN": token,
+            Accept: "application/json",
           },
-          body: JSON.stringify({ email, password }),
+          body: JSON.stringify({
+            email: email.trim(),
+            password,
+          }),
         }
       );
 
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
+        if (response.status === 403) {
+          throw new Error(
+            "Security verification failed. Please refresh the page and try again."
+          );
+        }
+
         throw new Error(
           data.message ||
             data.error ||
-            "Authentication failed. Please check your details."
+            (response.status === 401
+              ? "Invalid email or password."
+              : "Authentication failed. Please try again.")
         );
       }
 
@@ -106,32 +144,45 @@ export default function AuthGate({ children }) {
         setConfirmPassword("");
         setError("Account created! Please sign in.");
       } else {
+        setPassword("");
         await checkSession();
       }
     } catch (err) {
-      setError(err.message || "Something went wrong. Please try again.");
+      setError(
+        err.message ||
+          "Cannot connect to the backend. Please try again."
+      );
     } finally {
       setSubmitting(false);
     }
   }
 
   async function handleLogout() {
+    setError("");
+
     try {
       await initializeCsrf();
 
-      await fetch(`${API}/api/auth/logout`, {
+      const response = await fetch(`${API}/api/auth/logout`, {
         method: "POST",
         credentials: "include",
         headers: {
           "X-XSRF-TOKEN": getCsrfToken(),
+          Accept: "application/json",
         },
       });
+
+      if (!response.ok && response.status !== 401) {
+        throw new Error("Sign out failed. Please try again.");
+      }
     } catch (err) {
       console.error("Logout error:", err);
     } finally {
+      csrfToken = "";
       setUser(null);
       setEmail("");
       setPassword("");
+      setConfirmPassword("");
       setMode("login");
     }
   }
@@ -156,7 +207,11 @@ export default function AuthGate({ children }) {
 
           <div className="auth-user">
             <span>{user.email || email}</span>
-            <button onClick={handleLogout} className="auth-logout">
+            <button
+              onClick={handleLogout}
+              className="auth-logout"
+              type="button"
+            >
               Sign out
             </button>
           </div>
@@ -176,7 +231,9 @@ export default function AuthGate({ children }) {
         </div>
 
         <div className="auth-visual-content">
-          <span className="auth-eyebrow">YOUR DOCUMENT WORKSPACE</span>
+          <span className="auth-eyebrow">
+            YOUR DOCUMENT WORKSPACE
+          </span>
 
           <h1>
             Every format.
@@ -280,7 +337,9 @@ export default function AuthGate({ children }) {
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               autoComplete={
-                mode === "login" ? "current-password" : "new-password"
+                mode === "login"
+                  ? "current-password"
+                  : "new-password"
               }
               minLength={8}
               required
