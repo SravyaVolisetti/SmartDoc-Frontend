@@ -6,8 +6,7 @@ import "./App.css";
 
 
 
-const API_BASE = "http://localhost:8080";
-
+const API_BASE = "https://smartdoc-backend-9v7s.onrender.com";
 
 
 // Browser storage for converted files

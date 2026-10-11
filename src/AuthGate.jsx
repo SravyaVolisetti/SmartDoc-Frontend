@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import "./AuthGate.css";
 
-const API = "http://localhost:8080";
+const API = "https://smartdoc-backend-9v7s.onrender.com";
 
 export default function AuthGate({ children }) {
   const [mode, setMode] = useState("login");
